@@ -1,8 +1,11 @@
 import argparse
+import base64
+import copy
 import json
 import os
 import pprint
 import random
+import re
 import shutil
 import time
 
@@ -13,75 +16,51 @@ from nft_storage.api import nft_storage_api
 from PIL import Image
 
 # Image Generation Constants
-
-# https://dribbble.com/shots/843152-Colors?list=searches&tag=color_palette
-# Names from https://colors.artyclick.com/color-name-finder/
-BG_COLORS = {
-        'Pure White': (255, 255, 255),
-        'Deep Gray': (126, 125, 129),
-        'Tobacco Brown': (119, 91, 63),
-        'Blue Koi': (92, 163, 212),
-        'Fountain Blue': (97, 188, 183),
-        'Avocado Green': (181, 193, 71),
-        'Yellowish Orange': (237, 165, 70),
-        'Halloween Orange': (229, 107, 54),
-        'Orangy Red': (202, 70, 64),
-        'Carmine Pink': (222, 109, 124),
-        'Amethyst Purple': (154, 104, 210)
-}
 RARITY_MAPPING = {
-        'limited edition': 0,
-        'extremely rare': 1,
-        'very rare': 5,
-        'rare': 10,
-        'common': 20
+    'limited edition': 0,
+    'extremely rare': 1,
+    'very rare': 5,
+    'rare': 10,
+    'common': 25,
+    'supermajority': 66
 }
-EXCLUSIONARY_TRAITS = {
-    'Angry.png': ['Gameday Paint.png', 'Skeleton Facepaint.png'],
-    'Astronaut.png': ['Snorkel.png', 'Angel Wings.png', 'VR Headset.png'],
-    'Cyclops.png': ['Monocle.png', 'Aviators.png', 'Glasses.png', 'Laserbeam.png', 'Snorkel.png', 'Sunglasses.png', 'Swim Goggles.png'],
-    'Headphones.png': ['Earpods.png'],
-    'Ski Goggles.png': ['Casino Visor.png', 'Headlamp.png'],
-    'Snorkel.png': ['Beanie.png', 'Clover Ballcap.png', 'Headphones.png', 'MATA Ballcap.png', 'Purple and Gold Ballcap.png', 'Rasta.png', 'Yellow Ballcap.png'],
-    'VR Headset.png': ['Beanie.png', 'Casino Visor.png', 'Clover Ballcap.png', 'Earpods.png', 'Headband.png', 'Headlamp.png', 'Headphones.png', 'MATA Ballcap.png', 'Purple and Gold Ballcap.png', 'Yellow Ballcap.png'],
-    'Zombie.png': ['Baseball Uniform.png', 'Bomber Jacket.png', 'Business Suit.png', 'Flannel.png', 'Hawaiian Shirt.png', 'Judge Robes.png', 'Pajamas.png', 'Turtleneck Sweater.png', 'Crewneck Tee.png', 'Workout Tracksuit.png']
-}
+FILE_FORMAT = 'webp'
 
-# Image creation constants
-OUTPUT_DIR = 'output'
-OUTPUT_SIZE = (2100, 2100)
-ORDERED_SUBPICS_DIRS = ['fur', 'body', 'accessories', 'eyes', 'eyewear', 'headwear', 'clothing', 'mouth']
-PICS_DIR = 'pics'
-REQUIRED_SUBPICS = ['fur', 'body', 'mouth', 'eyes']
-
-# IPFS-related constants
-LOCALHOST = '127.0.0.1'
-IPFS_PORT = 5001
-
-# NFT Storage Constants
-TANGZ_POLICY_ID = '33568ad11f93b3e79ae8dee5ad928ded72adcea719e92108caf1521b'
-NFTSTORAGE_CONFIG = nft_storage.Configuration(access_token = os.environ.get('NFTSTORAGE_KEY'))
-
-def upload_to_ipfs_new_metadata(in_pics_dir, in_metadata_dir, out_metadata_dir):
+def generate_new_metadata_on_chain(in_metadata_dir, in_pics_dir, out_metadata_dir, policy, project):
     metadata_list = load_metadata(in_metadata_dir)
-    nfts_list = [unwrap(nft) for nft in metadata_list]
-    with nft_storage.ApiClient(NFTSTORAGE_CONFIG) as api_client:
+    nfts_list = [unwrap(nft, policy) for nft in metadata_list]
+    onchain_nfts = []
+    for nft in nfts_list:
+        onchain_nft = copy.deepcopy(nft)
+        nft_filename = os.path.join(in_pics_dir, get_pic_filename(nft['name']))
+        with open(nft_filename, 'rb') as nft_file:
+            base64_str = base64.b64encode(nft_file.read()).decode('ascii')
+            base64_attr = f"data:image/png;base64,{base64_str}"
+            onchain_nft['image'] = [base64_attr[i:i+64] for i in range(0, len(base64_attr), 64)]
+        onchain_nfts.append(onchain_nft)
+    dump_metadata_files(onchain_nfts, out_metadata_dir, policy, project)
+
+def upload_to_ipfs_new_metadata(in_pics_dir, in_metadata_dir, out_metadata_dir, policy, project, nftstorage_key):
+    metadata_list = load_metadata(in_metadata_dir)
+    nfts_list = [unwrap(nft, policy) for nft in metadata_list]
+    nftstorage_config = nft_storage.Configuration(access_token = nftstorage_key)
+    with nft_storage.ApiClient(nftstorage_config) as api_client:
         print("Beginning NFT.Storage file uploads")
         api_instance = nft_storage_api.NFTStorageAPI(api_client)
         for nft in nfts_list:
-            nft['image'] = upload_to_ipfs(api_client, nft, in_pics_dir)
-            dump_metadata_files([nft], out_metadata_dir)
+            nft['image'] = ["ipfs://", upload_to_ipfs(api_client, nft, in_pics_dir)]
+            dump_metadata_files([nft], out_metadata_dir, policy, project)
 
-def generate_sample_images(metadata_dir, pics_dir, num_images, num_iterations, output_pics_dir):
+def generate_sample_images(metadata_dir, pics_dir, num_images, num_iterations, output_pics_dir, ordered_subpics_dirs, policy):
     metadata_list = load_metadata(metadata_dir)
     random_set = random.choices(metadata_list, k=num_images)
     for iteration in range(num_iterations):
         print(f"Beginning optimization iteration {iteration + 1}...")
         for index in range(len(random_set)):
-            hamming_distances = [unwrap_calc_hamming(random_set[index], nft) for nft in random_set if nft != random_set[index]]
+            hamming_distances = [unwrap_calc_hamming(random_set[index], nft, ordered_subpics_dirs, policy) for nft in random_set if nft != random_set[index]]
             current_min_hamming = min(hamming_distances)
             for nft in metadata_list:
-                hamming_distances = [unwrap_calc_hamming(random_nft, nft) for random_nft in random_set if random_nft != random_set[index]]
+                hamming_distances = [unwrap_calc_hamming(random_nft, nft, ordered_subpics_dirs, policy) for random_nft in random_set if random_nft != random_set[index]]
                 new_min_hamming = min(hamming_distances)
                 if new_min_hamming > current_min_hamming:
                     print(f"Replacing at index {index} ({current_min_hamming} -> {new_min_hamming})")
@@ -90,8 +69,8 @@ def generate_sample_images(metadata_dir, pics_dir, num_images, num_iterations, o
     min_hamming = 1000
     for i in range(num_images):
         for j in range(i + 1, num_images):
-            min_hamming = min(min_hamming, unwrap_calc_hamming(random_set[i], random_set[j]))
-    random_set_ids = sorted([unwrap(nft)['name'] for nft in random_set])
+            min_hamming = min(min_hamming, unwrap_calc_hamming(random_set[i], random_set[j], ordered_subpics_dirs, policy))
+    random_set_ids = sorted([unwrap(nft, policy)['name'] for nft in random_set])
     print(f"Recommending the following for samples (min hamming: {min_hamming}) {random_set_ids}")
     for random_id in random_set_ids:
         png_filename = get_pic_filename(random_id)
@@ -100,66 +79,71 @@ def generate_sample_images(metadata_dir, pics_dir, num_images, num_iterations, o
         except FileNotFoundError as e:
             print(e)
 
-def compose_image(combination, bg_color, in_pics_dir):
-    background = Image.new('RGBA', OUTPUT_SIZE, bg_color)
-    for subpic_dir in ORDERED_SUBPICS_DIRS:
+def compose_image(combination, in_pics_dir, ordered_subpics_dirs, linked_categories, output_size):
+    background = Image.new('RGBA', output_size)
+    for subpic_dir in ordered_subpics_dirs:
         if combination[subpic_dir]:
             filename = os.path.join(in_pics_dir, subpic_dir, combination[subpic_dir])
-            foreground = Image.open(filename).convert('RGBA')
-            background = Image.alpha_composite(background, foreground)
+            if subpic_dir in linked_categories:
+                available_matches = os.listdir(filename)
+                linked_match = combination[linked_categories[subpic_dir]]
+                file_match = linked_match if f"{linked_match}.png" in available_matches else 'Default'
+                #print(f"Looking for {linked_match} in subdir {filename} ({available_matches}), found {file_match}")
+                filename = os.path.join(filename, file_match)
+            foreground = Image.open(f"{filename}.png").convert('RGBA')
+            background = Image.alpha_composite(background, foreground.resize(output_size))
     return background
 
-def generate_image(nft, in_pics_dir, out_pics_dir):
-    bg_color = BG_COLORS[nft['background']]
+def generate_image(nft, in_pics_dir, out_pics_dir, ordered_subpics_dirs, linked_categories, output_size):
     try:
-        composed_image = compose_image(nft, bg_color, in_pics_dir)
+        composed_image = compose_image(nft, in_pics_dir, ordered_subpics_dirs, linked_categories, output_size)
         composed_image.save(os.path.join(out_pics_dir, get_pic_filename(nft['name'])))
     except FileNotFoundError as e:
         print(e)
 
-def calculate_hamming_distance(nft_a, nft_b):
+def calculate_hamming_distance(nft_a, nft_b, ordered_subpics_dirs):
     hamming_distance = 0
-    for subpic_dir in ORDERED_SUBPICS_DIRS:
+    for subpic_dir in ordered_subpics_dirs:
         if nft_a[subpic_dir] != nft_b[subpic_dir]:
             hamming_distance += 1
     return hamming_distance
 
-def get_nft_name(i):
-    return f"WildTangz {i+1}"
+def get_nft_name(prefix, i):
+    return f"{prefix} {i+1}"
 
 def get_pic_filename(nft_name):
-    return f"{nft_name}.png"
+    return f"{nft_name}.{FILE_FORMAT}"
 
 def get_metadata_filename(nft_name):
     return f"{nft_name}.json"
 
-def wrap(nft_name, values):
+def wrap(nft_name, values, policy):
     return {
         "721": {
-            TANGZ_POLICY_ID: {
+            policy: {
                 nft_name: values
             },
             "version": "1.0"
         }
     }
 
-def unwrap(metadata):
-    return next(iter(metadata["721"][TANGZ_POLICY_ID].values()))
+def unwrap(metadata, policy):
+    return next(iter(metadata["721"][policy].values()))
 
-def get_metadata_for(nft):
-    metadata = { "mediaType": "image/png", "project": "Wild Tangz" }
+def get_metadata_for(nft, policy, project):
+    metadata = { "mediaType": "image/png", "project": project }
     for key in nft:
-        metadata[key] = os.path.splitext(nft[key])[0]
-    return wrap(nft['name'], metadata)
+        metadata[key] = nft[key]
+    return wrap(nft['name'], metadata, policy)
 
-def write_metadata_statistics(full_list, metadata_statistics, expected_ratios, statistics_file):
+def write_metadata_statistics(full_list, metadata_statistics, expected_ratios, statistics_file, ordered_subpics_dirs):
     total_nfts = len(full_list)
     total_hamming_distance = 0
-    min_hamming_distance = len(ORDERED_SUBPICS_DIRS)
+    min_hamming_distance = len(ordered_subpics_dirs)
     max_hamming_distance = 0
     for i in range(0, total_nfts):
         for j in range(i + 1, total_nfts):
-            hamming_distance = calculate_hamming_distance(full_list[i], full_list[j])
+            hamming_distance = calculate_hamming_distance(full_list[i], full_list[j], ordered_subpics_dirs)
             min_hamming_distance = min(min_hamming_distance, hamming_distance)
             max_hamming_distance = max(max_hamming_distance, hamming_distance)
             total_hamming_distance += hamming_distance
@@ -167,21 +151,20 @@ def write_metadata_statistics(full_list, metadata_statistics, expected_ratios, s
     statistics_file.write(f"Minimum hamming distance: {min_hamming_distance}\n")
     statistics_file.write(f"Maximum hamming distance: {max_hamming_distance}\n")
     statistics_file.write(f"Average hamming distance: {avg_hamming_distance}\n")
-    statistics_file.write(f"\tNAME                               ACTUAL      EXPECTED   VARIANCE\n")
+    statistics_file.write(f"\tNAME                               COUNT     ACTUAL      EXPECTED   VARIANCE\n")
     for subpic_dir in metadata_statistics.keys():
         statistics_file.write(f"{subpic_dir} -----------------\n")
         for item in metadata_statistics[subpic_dir].keys():
             total_number = metadata_statistics[subpic_dir][item]
-            filename = os.path.basename(item) if item else 'None'
             ratio = total_number / float(total_nfts) * 100.0
-            expected = expected_ratios[subpic_dir][filename] * 100.0 if item else 0.0
+            expected = expected_ratios[subpic_dir][item] * 100.0 if item else 0.0
             variance = int(((ratio / expected) - 1) * 100) if expected else 1000.0
-            statistics_file.write(f"\t{filename:30}{ratio:-10.1f}%{expected:-10.1f}%{variance:8}%\n")
+            statistics_file.write(f"\t{item:30}{total_number:10}{ratio:-10.1f}%{expected:-10.1f}%{variance:8}%\n")
 
-def dump_metadata_files(full_list, metadata_dir):
+def dump_metadata_files(full_list, metadata_dir, policy, project):
     for nft in full_list:
         with open(os.path.join(metadata_dir, get_metadata_filename(nft['name'])), 'w') as metadata_file:
-            json.dump(get_metadata_for(nft), metadata_file)
+            json.dump(get_metadata_for(nft, policy, project), metadata_file)
 
 def compile_metadata_statistics(full_list, variable_traits):
     metadata_statistics = {}
@@ -195,24 +178,33 @@ def compile_metadata_statistics(full_list, variable_traits):
             metadata_statistics[subpic_dir][nft_subpic] += 1
     return metadata_statistics
 
-def is_illegal(nft_combination):
+def is_illegal(nft_combination, excluded_combinations):
     traits = nft_combination.values()
-    for excluder in EXCLUSIONARY_TRAITS:
-        for exclusion in EXCLUSIONARY_TRAITS[excluder]:
-            if excluder in traits and exclusion in traits:
-                #print(f"Excluding combination with '{excluder}' due to '{exclusion}'")
-                return True
+    for excluder in excluded_combinations:
+        for exclusion in excluded_combinations[excluder]:
+            for trait in traits:
+                if re.match(excluder, trait) and exclusion in traits:
+                    #print(f"Excluding combination with '{excluder}' due to '{exclusion}'")
+                    return True
     return False
 
+def force_upgrade(nft_combination, forced_combinations):
+    for trait in nft_combination:
+        trait_val = nft_combination[trait]
+        for forced_combination in forced_combinations:
+            if re.match(forced_combination, trait_val):
+                forced_traits = forced_combinations[forced_combination]
+                for forced_trait in forced_traits:
+                    nft_combination[forced_trait] = forced_traits[forced_trait]
 
-def generate_nft_metadata(start_num, total_nfts, traits_ratios, acceptable_hamming, static_traits, variable_traits):
+def generate_nft_metadata(start_num, total_nfts, traits_ratios, acceptable_hamming, static_traits, variable_traits, ordered_subpics_dirs, prefix, excluded_combinations, forced_combinations):
     full_list = []
     last_printed = time.time()
     for i in range(start_num, start_num + total_nfts):
         nft_combination = {}
         while not nft_combination:
             if time.time() - last_printed > 5:
-                print(f"Found {i} combinations so far...")
+                print(f"Found {i - start_num} combinations so far...")
                 last_printed = time.time()
             for key in static_traits:
                 nft_combination[key] = static_traits[key]
@@ -224,39 +216,32 @@ def generate_nft_metadata(start_num, total_nfts, traits_ratios, acceptable_hammi
                         nft_combination[subpic_dir] = filename
                         break
                     dice_roll -= ratio
-                if not nft_combination[subpic_dir] and subpic_dir in REQUIRED_SUBPICS:
+                if not nft_combination[subpic_dir] and subpic_dir in ordered_subpics_dirs:
                     print(f"Illegal state: required subpic {subpic_dir} not found (roll {dice_roll})")
-            if is_illegal(nft_combination):
+            if is_illegal(nft_combination, excluded_combinations):
                 nft_combination = {}
                 continue
+            force_upgrade(nft_combination, forced_combinations)
             for already_found in full_list:
-                if calculate_hamming_distance(nft_combination, already_found) < acceptable_hamming:
+                if calculate_hamming_distance(nft_combination, already_found, ordered_subpics_dirs) < acceptable_hamming:
                     #print(f"Repeating iteration {i}...")
                     nft_combination = {}
                     break
-        nft_combination['name'] = get_nft_name(i)
+        nft_combination['name'] = get_nft_name(prefix, i)
         full_list.append(nft_combination)
     return full_list
 
-def add_backgrounds_to(nft_metadata):
-    for metadata in nft_metadata:
-        metadata['background'] = random.choice(list(BG_COLORS.keys()))
-
-def generate_nfts(start_num, total_nfts, traits_ratios, in_pics_dir, acceptable_hamming, output_pics_dir, metadata_dir, static_traits, variable_traits):
-    nft_metadata = generate_nft_metadata(start_num, total_nfts, traits_ratios, acceptable_hamming, static_traits, variable_traits)
-    add_backgrounds_to(nft_metadata)
-    dump_metadata_files(nft_metadata, metadata_dir) # Temporary in case something happens during the composition run
+def generate_nfts(start_num, total_nfts, traits_ratios, in_pics_dir, acceptable_hamming, output_pics_dir, metadata_dir, static_traits, variable_traits, ordered_subpics_dirs, linked_categories, output_size, policy, name_prefix, project, excluded_combinations, forced_combinations):
+    nft_metadata = generate_nft_metadata(start_num, total_nfts, traits_ratios, acceptable_hamming, static_traits, variable_traits, ordered_subpics_dirs, name_prefix, excluded_combinations, forced_combinations)
+    dump_metadata_files(nft_metadata, metadata_dir, policy, project) # Temporary in case something happens during the composition run
     metadata_statistics = compile_metadata_statistics(nft_metadata, variable_traits)
     with open(os.path.join(os.path.dirname(metadata_dir), 'metadata_statistics.tsv'), 'w') as statistics_file:
-        write_metadata_statistics(nft_metadata, metadata_statistics, traits_ratios, statistics_file)
-    with nft_storage.ApiClient(NFTSTORAGE_CONFIG) as api_client:
-        for nft in nft_metadata:
-            generate_image(nft, in_pics_dir, output_pics_dir)
-            nft['image'] = upload_to_ipfs(api_client, nft, output_pics_dir)
-            dump_metadata_files([nft], metadata_dir)
+        write_metadata_statistics(nft_metadata, metadata_statistics, traits_ratios, statistics_file, ordered_subpics_dirs)
+    for nft in nft_metadata:
+        generate_image(nft, in_pics_dir, output_pics_dir, ordered_subpics_dirs, linked_categories, output_size)
 
-def unwrap_calc_hamming(metadata_a, metadata_b):
-    return calculate_hamming_distance(unwrap(metadata_a), unwrap(metadata_b))
+def unwrap_calc_hamming(metadata_a, metadata_b, ordered_subpics_dirs, policy):
+    return calculate_hamming_distance(unwrap(metadata_a, policy), unwrap(metadata_b, policy), ordered_subpics_dirs)
 
 def load_metadata(metadata_dir):
     metadata_list = []
@@ -282,19 +267,19 @@ def upload_to_ipfs(api_client, nft, in_pics_dir):
                 api_response = api_instance.store(nft_body, _check_return_type=False)
                 #print(f"Received response: {api_response}")
                 print(f"Uploaded as {api_response.value['cid']}")
-                return f"ipfs://{make_cid(api_response.value['cid']).to_v0()}"
+                return api_response.value['cid']
                 #print(f"Dumping {nft} to file")
             except nft_storage.ApiException as e:
                 print("Exception when calling NFTStorageAPI->store: %s\n...Retrying" % e)
                 time.sleep(1)
     raise ValueError('Could not upload to IPFS, see exception log.')
 
-def check_uniqueness(nft_metadata, reference_dir):
+def check_uniqueness(nft_metadata, reference_dir, ordered_subpics_dirs):
     with open(nft_metadata, 'r') as nft_file:
         nft = json.load(nft_file)
     print(nft)
     reference_set = load_metadata(reference_dir)
-    hamming_distances = [(unwrap_calc_hamming(nft, reference_nft), reference_nft) for reference_nft in reference_set]
+    hamming_distances = [(unwrap_calc_hamming(nft, reference_nft, ordered_subpics_dirs), reference_nft) for reference_nft in reference_set]
     min_hamming = 10000
     for distance, ref_nft in hamming_distances:
         if distance < min_hamming:
@@ -303,62 +288,93 @@ def check_uniqueness(nft_metadata, reference_dir):
     print(f"Min hamming found {min_hamming}:\n{reference}")
     #print(unwrap_calc_hamming(nft, hamming_distances[i][1]))
 
-def regenerate_image(nft_metadata_filename, in_pics_dir, output_pics_dir):
+def regenerate_image(nft_metadata_filename, in_pics_dir, output_pics_dir, ordered_subpics_dirs, output_size, policy):
     with open(nft_metadata_filename, 'r') as nft_metadata_file:
-        nft = unwrap(json.load(nft_metadata_file))
-        for key in nft:
-            if key in ORDERED_SUBPICS_DIRS and not nft[key].lower().endswith('.png'):
-                nft[key] = f"{nft[key]}.png"
-        generate_image(nft, in_pics_dir, output_pics_dir)
+        nfts = json.load(nft_metadata_file)["721"][policy].values()
+        for nft in nfts:
+            for key in nft:
+                if key in ordered_subpics_dirs and not nft[key].lower().endswith('.png'):
+                    nft[key] = f"{nft[key]}.png"
+            generate_image(nft, in_pics_dir, output_pics_dir, ordered_subpics_dirs, output_size)
 
-def read_percentages(percentages_filename, desired_categories):
+def read_generator_file(percentages_filename):
     percentages = {}
     with open(_args.percentages_file, 'r') as percentages_file:
-        traits_descriptions = json.load(percentages_file)
+        traits_json = json.load(percentages_file)
+        ordered_categories = traits_json['ordered_categories']
+        traits_descriptions = traits_json['rarity']
         for category in traits_descriptions:
             category_ratios = {}
-            if not category in desired_categories:
+            if not category in ordered_categories:
                 raise ValueError(f"Unexpected category '{category}' found in percentages file")
             category_traits = traits_descriptions[category]
             mapped_freqs = [RARITY_MAPPING[category_traits[attr]] for attr in category_traits]
             total_freqs = float(sum(mapped_freqs))
             percentages[category] = dict([(attr, RARITY_MAPPING[category_traits[attr]] / total_freqs) for attr in category_traits])
-    return percentages
+    return {
+        'forced_combinations': traits_json['forced_combinations'],
+        'excluded_combinations': traits_json['excluded_combinations'],
+        'linked_categories': traits_json['linked_categories'],
+        'ordered_categories': ordered_categories,
+        'rarity': percentages
+    }
 
 def make_and_get_output_dir(prefix):
-    output_dir = os.path.join(OUTPUT_DIR, str(int(time.time())))
+    output_dir = os.path.join(prefix, str(int(time.time())))
     metadata_dir = os.path.join(output_dir, 'metadata')
     pics_dir = os.path.join(output_dir, 'pics')
     [os.makedirs(out_dir) for out_dir in [output_dir, metadata_dir, pics_dir]]
     return (pics_dir, metadata_dir)
 
 def get_parser():
-    parser = argparse.ArgumentParser(description='Generate NFTs for Wild Tangz')
+    parser = argparse.ArgumentParser(description='Generate NFTs')
     subparsers = parser.add_subparsers(dest='command')
 
     nfts_parser = subparsers.add_parser('generate-nfts', help='Compose NFTs according to trait gradient algorithm')
+    nfts_parser.add_argument('--output-dir', type=str, required=True)
     nfts_parser.add_argument('--total-nfts', type=int, required=True)
+    nfts_parser.add_argument('--policy', type=str, required=True)
+    nfts_parser.add_argument('--project', type=str, required=True)
+    nfts_parser.add_argument('--name-prefix', type=str, required=True)
+    nfts_parser.add_argument('--dimension', type=int, required=True)
     nfts_parser.add_argument('--percentages-file', required=True)
     nfts_parser.add_argument('--min-hamming', type=int, required=True)
+    nfts_parser.add_argument('--pics-dir', required=True)
     nfts_parser.add_argument("--static-trait", action='append', type=lambda kv: kv.split("="), dest='static_traits')
     nfts_parser.add_argument('--start-num', type=int, required=False, default=0)
 
     samples_parser = subparsers.add_parser('generate-samples', help='Generate recommendations for unique samples')
+    samples_parser.add_argument('--output-dir', type=str, required=True)
     samples_parser.add_argument('--metadata-dir', required=True)
     samples_parser.add_argument('--pics-dir', required=True)
     samples_parser.add_argument('--num-images', type=int, required=True)
     samples_parser.add_argument('--num-iterations', type=int, required=True)
+    samples_parser.add_argument('--policy', type=str, required=True)
+
+    onchain_parser = subparsers.add_parser('on-chain', help='Create metadata with PNG on chain (size checks not enforced, must be <16KB)')
+    onchain_parser.add_argument('--output-dir', type=str, required=True)
+    onchain_parser.add_argument('--metadata-dir', required=True)
+    onchain_parser.add_argument('--pics-dir', required=True)
+    onchain_parser.add_argument('--policy', required=True)
+    onchain_parser.add_argument('--project', required=True)
 
     ipfs_parser = subparsers.add_parser('upload-to-ipfs', help='Upload raw images to IPFS')
+    ipfs_parser.add_argument('--output-dir', type=str, required=True)
     ipfs_parser.add_argument('--metadata-dir', required=True)
     ipfs_parser.add_argument('--pics-dir', required=True)
+    ipfs_parser.add_argument('--policy', type=str, required=True)
+    ipfs_parser.add_argument('--project', type=str, required=True)
+    ipfs_parser.add_argument('--nft-storage-key', type=str, required=True)
 
-    ipfs_parser = subparsers.add_parser('check-uniqueness', help='Compare the uniqueness of this NFT to the reference set')
-    ipfs_parser.add_argument('--nft-metadata', required=True)
-    ipfs_parser.add_argument('--reference-set-dir', required=True)
+    uniq_parser = subparsers.add_parser('check-uniqueness', help='Compare the uniqueness of this NFT to the reference set')
+    uniq_parser.add_argument('--nft-metadata', required=True)
+    uniq_parser.add_argument('--reference-set-dir', required=True)
 
-    ipfs_parser = subparsers.add_parser('regenerate-image', help='Regenerate an image based on metadata file provided (useful for 1-of-1s)')
-    ipfs_parser.add_argument('--nft-metadata-file', required=True)
+    regen_parser = subparsers.add_parser('regenerate-image', help='Regenerate an image based on metadata file provided (useful for 1-of-1s)')
+    regen_parser.add_argument('--output-dir', type=str, required=True)
+    regen_parser.add_argument('--nft-metadata-file', required=True)
+    regen_parser.add_argument('--dimension', type=int, required=True)
+    regen_parser.add_argument('--pics-dir', required=True)
 
     return parser
 
@@ -369,22 +385,29 @@ if __name__ == '__main__':
     seed_random()
     _args = get_parser().parse_args()
     if not _args.command in ['check-uniqueness']:
-        _pics_dir, _metadata_dir = make_and_get_output_dir(OUTPUT_DIR)
+        _pics_dir, _metadata_dir = make_and_get_output_dir(_args.output_dir)
     if _args.command == 'generate-nfts':
-        _traits_ratios = read_percentages(_args.percentages_file, ORDERED_SUBPICS_DIRS)
+        _traits_rarity = read_generator_file(_args.percentages_file)
+        _excluded_combinations = _traits_rarity['excluded_combinations']
+        _forced_combinations = _traits_rarity['forced_combinations']
+        _linked_categories = _traits_rarity['linked_categories']
+        _ordered_subpics_dir = _traits_rarity['ordered_categories']
+        _traits_ratios = _traits_rarity['rarity']
         _static_traits = dict(_args.static_traits) if _args.static_traits else {}
-        _variable_traits = [trait for trait in ORDERED_SUBPICS_DIRS if not (trait in _static_traits.keys())]
+        _variable_traits = [trait for trait in _ordered_subpics_dir if not (trait in _static_traits.keys())]
         print(f"Creating {_args.total_nfts} NFT w/hamming >{_args.min_hamming} & ratios from '{_args.percentages_file}' to dir '{_pics_dir}'")
         print(f"Static traits specified: {_static_traits}")
         print(f"Variable traits specified: {_variable_traits}")
-        generate_nfts(_args.start_num, _args.total_nfts, _traits_ratios, PICS_DIR, _args.min_hamming, _pics_dir, _metadata_dir, _static_traits, _variable_traits)
+        generate_nfts(_args.start_num, _args.total_nfts, _traits_ratios, _args.pics_dir, _args.min_hamming, _pics_dir, _metadata_dir, _static_traits, _variable_traits, _ordered_subpics_dir, _linked_categories, (_args.dimension, _args.dimension), _args.policy, _args.name_prefix, _args.project, _excluded_combinations, _forced_combinations)
     elif _args.command == 'generate-samples':
-        generate_sample_images(_args.metadata_dir, _args.pics_dir, _args.num_images, _args.num_iterations, _pics_dir)
+        generate_sample_images(_args.metadata_dir, _args.pics_dir, _args.num_images, _args.num_iterations, _pics_dir, _ordered_subpics_dir, _args.policy)
+    elif _args.command == 'on-chain':
+        generate_new_metadata_on_chain(_args.metadata_dir, _args.pics_dir, _metadata_dir, _args.policy, _args.project)
     elif _args.command == 'upload-to-ipfs':
-        upload_to_ipfs_new_metadata(_args.pics_dir, _args.metadata_dir, _metadata_dir)
+        upload_to_ipfs_new_metadata(_args.pics_dir, _args.metadata_dir, _metadata_dir, _args.policy, _args.project, _args.nft_storage_key)
     elif _args.command == 'check-uniqueness':
-        check_uniqueness(_args.nft_metadata, _args.reference_set_dir)
+        check_uniqueness(_args.nft_metadata, _args.reference_set_dir, _ordered_subpics_dir)
     elif _args.command == 'regenerate-image':
-        regenerate_image(_args.nft_metadata_file, PICS_DIR, _pics_dir)
+        regenerate_image(_args.nft_metadata_file, _args.pics_dir, _pics_dir, _ordered_subpics_dir, (_args.dimension, _args.dimension))
     else:
         raise ValueError("No command passed to the program.  Use -h for help.")
