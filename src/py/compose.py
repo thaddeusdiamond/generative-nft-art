@@ -201,7 +201,7 @@ def force_upgrade(nft_combination, forced_combinations):
                 for forced_trait in forced_traits:
                     nft_combination[forced_trait] = forced_traits[forced_trait]
 
-def generate_nft_metadata(start_num, total_nfts, traits_ratios, acceptable_hamming, static_traits, variable_traits, ordered_subpics_dirs, prefix, excluded_combinations, forced_combinations):
+def generate_nft_metadata(start_num, total_nfts, traits_ratios, acceptable_hamming, static_traits, variable_traits, ordered_subpics_dirs, prefix, excluded_combinations, forced_combinations, reference_set_dir):
     full_list = []
     last_printed = time.time()
     for i in range(start_num, start_num + total_nfts):
@@ -226,7 +226,7 @@ def generate_nft_metadata(start_num, total_nfts, traits_ratios, acceptable_hammi
                 nft_combination = {}
                 continue
             force_upgrade(nft_combination, forced_combinations)
-            for already_found in full_list:
+            for already_found in full_list + reference_set_dir:
                 if calculate_hamming_distance(nft_combination, already_found, ordered_subpics_dirs) < acceptable_hamming:
                     #print(f"Repeating iteration {i}...")
                     nft_combination = {}
@@ -235,8 +235,8 @@ def generate_nft_metadata(start_num, total_nfts, traits_ratios, acceptable_hammi
         full_list.append(nft_combination)
     return full_list
 
-def generate_nfts(start_num, total_nfts, traits_ratios, in_pics_dir, acceptable_hamming, output_pics_dir, metadata_dir, static_traits, variable_traits, ordered_subpics_dirs, linked_categories, output_size, policy, name_prefix, project, excluded_combinations, forced_combinations):
-    nft_metadata = generate_nft_metadata(start_num, total_nfts, traits_ratios, acceptable_hamming, static_traits, variable_traits, ordered_subpics_dirs, name_prefix, excluded_combinations, forced_combinations)
+def generate_nfts(start_num, total_nfts, traits_ratios, in_pics_dir, acceptable_hamming, output_pics_dir, metadata_dir, static_traits, variable_traits, ordered_subpics_dirs, linked_categories, output_size, policy, name_prefix, project, excluded_combinations, forced_combinations, reference_set_dir):
+    nft_metadata = generate_nft_metadata(start_num, total_nfts, traits_ratios, acceptable_hamming, static_traits, variable_traits, ordered_subpics_dirs, name_prefix, excluded_combinations, forced_combinations, reference_set_dir)
     dump_metadata_files(nft_metadata, metadata_dir, policy, project) # Temporary in case something happens during the composition run
     metadata_statistics = compile_metadata_statistics(nft_metadata, variable_traits)
     with open(os.path.join(os.path.dirname(metadata_dir), 'metadata_statistics.tsv'), 'w') as statistics_file:
@@ -280,19 +280,19 @@ def upload_to_ipfs(api_client, nft, in_pics_dir):
     except Exception as e:
         print(f"Encountered fatal exception for '{nft_filename}': {e}")
 
-def check_uniqueness(nft_metadata, reference_dir, ordered_subpics_dirs):
-    with open(nft_metadata, 'r') as nft_file:
-        nft = json.load(nft_file)
-    print(nft)
-    reference_set = load_metadata(reference_dir)
-    hamming_distances = [(unwrap_calc_hamming(nft, reference_nft, ordered_subpics_dirs), reference_nft) for reference_nft in reference_set]
-    min_hamming = 10000
-    for distance, ref_nft in hamming_distances:
-        if distance < min_hamming:
-            min_hamming = distance
-            reference = ref_nft
-    print(f"Min hamming found {min_hamming}:\n{reference}")
-    #print(unwrap_calc_hamming(nft, hamming_distances[i][1]))
+def check_uniqueness(nft_metadata, reference_set, ordered_subpics_dirs, policy):
+    nft_paths = [os.path.join(nft_metadata, file) for file in os.listdir(nft_metadata)] if os.path.isdir(nft_metadata) else [nft_metadata]
+    for nft_path in nft_paths:
+        with open(nft_path, 'r') as nft_file:
+            nft = json.load(nft_file)
+        print(nft)
+        hamming_distances = [(unwrap_calc_hamming(nft, reference_nft, ordered_subpics_dirs, policy), reference_nft) for reference_nft in reference_set]
+        min_hamming = 10000
+        for distance, ref_nft in hamming_distances:
+            if distance < min_hamming:
+                min_hamming = distance
+                reference = ref_nft
+        print(f"Min hamming found {min_hamming}:\n{reference}")
 
 def regenerate_image(nft_metadata_filename, in_pics_dir, output_pics_dir, ordered_subpics_dirs, linked_categories, output_size, policy, trait_filter):
     with open(nft_metadata_filename, 'r') as nft_metadata_file:
@@ -349,6 +349,7 @@ def get_parser():
     nfts_parser.add_argument('--pics-dir', required=True)
     nfts_parser.add_argument("--static-trait", action='append', type=lambda kv: kv.split("="), dest='static_traits')
     nfts_parser.add_argument('--start-num', type=int, required=False, default=0)
+    nfts_parser.add_argument('--reference-set-dir', type=str, required=False)
 
     samples_parser = subparsers.add_parser('generate-samples', help='Generate recommendations for unique samples')
     samples_parser.add_argument('--output-dir', type=str, required=True)
@@ -376,6 +377,8 @@ def get_parser():
     uniq_parser = subparsers.add_parser('check-uniqueness', help='Compare the uniqueness of this NFT to the reference set')
     uniq_parser.add_argument('--nft-metadata', required=True)
     uniq_parser.add_argument('--reference-set-dir', required=True)
+    uniq_parser.add_argument('--percentages-file', type=str, required=True)
+    uniq_parser.add_argument('--policy', type=str, required=True)
 
     regen_parser = subparsers.add_parser('regenerate-image', help='Regenerate an image based on metadata file provided (useful for 1-of-1s)')
     regen_parser.add_argument('--output-dir', type=str, required=True)
@@ -418,7 +421,8 @@ if __name__ == '__main__':
         print(f"Creating {_args.total_nfts} NFT w/hamming >{_args.min_hamming} & ratios from '{_args.percentages_file}' to dir '{_pics_dir}'")
         print(f"Static traits specified: {_static_traits}")
         print(f"Variable traits specified: {_variable_traits}")
-        generate_nfts(_args.start_num, _args.total_nfts, _traits_ratios, _args.pics_dir, _args.min_hamming, _pics_dir, _metadata_dir, _static_traits, _variable_traits, _ordered_subpics_dir, _linked_categories, (_args.dimension, _args.dimension), _args.policy, _args.name_prefix, _args.project, _excluded_combinations, _forced_combinations)
+        _reference_set = load_metadata(_args.reference_set_dir) if _args.reference_set_dir else []
+        generate_nfts(_args.start_num, _args.total_nfts, _traits_ratios, _args.pics_dir, _args.min_hamming, _pics_dir, _metadata_dir, _static_traits, _variable_traits, _ordered_subpics_dir, _linked_categories, (_args.dimension, _args.dimension), _args.policy, _args.name_prefix, _args.project, _excluded_combinations, _forced_combinations, _reference_set)
     elif _args.command == 'generate-samples':
         generate_sample_images(_args.metadata_dir, _args.pics_dir, _args.num_images, _args.num_iterations, _pics_dir, _ordered_subpics_dir, _args.policy)
     elif _args.command == 'on-chain':
@@ -428,7 +432,8 @@ if __name__ == '__main__':
     elif _args.command == 'check-uniqueness':
         _traits_rarity = read_generator_file(_args.percentages_file)
         _ordered_subpics_dir = _traits_rarity['ordered_categories']
-        check_uniqueness(_args.nft_metadata, _args.reference_set_dir, _ordered_subpics_dir)
+        _reference_set = load_metadata(_args.reference_set_dir)
+        check_uniqueness(_args.nft_metadata, _reference_set, _ordered_subpics_dir, _args.policy)
     elif _args.command == 'regenerate-directory':
         _traits_rarity = read_generator_file(_args.percentages_file)
         _ordered_subpics_dir = _traits_rarity['ordered_categories']
