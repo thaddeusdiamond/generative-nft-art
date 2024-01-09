@@ -294,11 +294,14 @@ def check_uniqueness(nft_metadata, reference_dir, ordered_subpics_dirs):
     print(f"Min hamming found {min_hamming}:\n{reference}")
     #print(unwrap_calc_hamming(nft, hamming_distances[i][1]))
 
-def regenerate_image(nft_metadata_filename, in_pics_dir, output_pics_dir, ordered_subpics_dirs, linked_categories, output_size, policy):
+def regenerate_image(nft_metadata_filename, in_pics_dir, output_pics_dir, ordered_subpics_dirs, linked_categories, output_size, policy, trait_filter):
     with open(nft_metadata_filename, 'r') as nft_metadata_file:
         nfts_json = json.load(nft_metadata_file)
         nfts = ["721"][policy].values() if policy else [nfts_json]
         for nft in nfts:
+            (trait, val) = trait_filter.split('=') if trait_filter else (None, None)
+            if trait in nft and nft[trait] != val:
+                continue
             generate_image(nft, in_pics_dir, output_pics_dir, ordered_subpics_dirs, linked_categories, output_size)
 
 def read_generator_file(percentages_filename):
@@ -381,6 +384,7 @@ def get_parser():
     regen_parser.add_argument('--dimension', type=int, required=True)
     regen_parser.add_argument('--pics-dir', required=True)
     regen_parser.add_argument('--policy', required=True)
+    regen_parser.add_argument('--trait-filter', required=False)
 
     regen_dir_parser = subparsers.add_parser('regenerate-directory', help='Regenerate a directory based on metadata files provided (useful for upgraded art)')
     regen_dir_parser.add_argument('--output-dir', type=str, required=True)
@@ -390,6 +394,7 @@ def get_parser():
     regen_dir_parser.add_argument('--pics-dir', required=True)
     regen_dir_parser.add_argument('--no-unwrap', action='store_true')
     regen_dir_parser.add_argument('--policy', required=True)
+    regen_dir_parser.add_argument('--trait-filter', required=False)
 
     return parser
 
@@ -430,10 +435,11 @@ if __name__ == '__main__':
         _linked_categories = _traits_rarity['linked_categories']
         for nft_metadata_file in os.listdir(_args.nft_directory):
             nft_metadata_path = os.path.join(_args.nft_directory, nft_metadata_file)
-            regenerate_image(nft_metadata_path, _args.pics_dir, _pics_dir, _ordered_subpics_dir, _linked_categories, (_args.dimension, _args.dimension), _args.policy)
+            regenerate_image(nft_metadata_path, _args.pics_dir, _pics_dir, _ordered_subpics_dir, _linked_categories, (_args.dimension, _args.dimension), _args.policy, _args.trait_filter)
     elif _args.command == 'regenerate-image':
         _traits_rarity = read_generator_file(_args.percentages_file)
         _ordered_subpics_dir = _traits_rarity['ordered_categories']
-        regenerate_image(_args.nft_metadata_file, _args.pics_dir, _pics_dir, _ordered_subpics_dir, _linked_categories, (_args.dimension, _args.dimension), _args.policy)
+        _linked_categories = _traits_rarity['linked_categories']
+        regenerate_image(_args.nft_metadata_file, _args.pics_dir, _pics_dir, _ordered_subpics_dir, _linked_categories, (_args.dimension, _args.dimension), _args.policy, _args.trait_filter)
     else:
         raise ValueError("No command passed to the program.  Use -h for help.")
