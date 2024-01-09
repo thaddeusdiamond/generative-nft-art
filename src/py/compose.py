@@ -120,6 +120,8 @@ def get_metadata_filename(nft_name):
     return f"{nft_name}.json"
 
 def wrap(nft_name, values, policy):
+    if policy == '':
+        return values
     return {
         "721": {
             policy: {
@@ -130,7 +132,7 @@ def wrap(nft_name, values, policy):
     }
 
 def unwrap(metadata, policy):
-    return next(iter(metadata["721"][policy].values()))
+    return next(iter(metadata["721"][policy].values())) if policy != '' else metadata
 
 def get_metadata_for(nft, policy, project):
     metadata = { "mediaType": "image/png", "project": project }
