@@ -3,13 +3,30 @@
     "background",
     "fur",
     "body",
-    "mouth",
+    "accessories",
     "eyes",
     "eyewear",
     "headwear",
-    "accessories"
+    "clothing",
+    "mouth"
   ],
+  "excluded_combinations": [],
+  "linked_categories": [],
+  "forced_combinations": [],
   "rarity": {
+    "background": {
+        "Pure White": "common",
+        "Deep Gray": "common",
+        "Tobacco Brown": "common",
+        "Blue Koi": "common",
+        "Fountain Blue": "common",
+        "Avocado Green": "common",
+        "Yellowish Orange": "common",
+        "Halloween Orange": "common",
+        "Orangy Red": "common",
+        "Carmine Pink": "common",
+        "Amethyst Purple": "common"
+    },
     "fur": {
         "Blue": "common",
         "Brown": "common",
@@ -43,11 +60,11 @@
         "Overalls": "very rare",
         "Pajamas": "very rare",
         "Superhero": "extremely rare",
+        "Tang Top": "common",
         "Tribal Tattoos": "very rare",
         "Turtleneck Sweater": "rare",
         "Tuxedo": "extremely rare",
         "V-Neck Tee": "common",
-        "Wife Beater": "common",
         "Workout Tracksuit": "very rare"
     },
     "mouth": {
