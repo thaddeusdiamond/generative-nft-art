@@ -2,6 +2,7 @@ import argparse
 import base64
 import copy
 import json
+import numbers
 import os
 import pprint
 import random
@@ -304,6 +305,11 @@ def regenerate_image(nft_metadata_filename, in_pics_dir, output_pics_dir, ordere
                 continue
             generate_image(nft, in_pics_dir, output_pics_dir, ordered_subpics_dirs, linked_categories, output_size)
 
+def get_rarity_value(rarity_val):
+    if isinstance(rarity_val, numbers.Number):
+        return rarity_val
+    return RARITY_MAPPING[rarity_val]
+
 def read_generator_file(percentages_filename):
     percentages = {}
     with open(_args.percentages_file, 'r') as percentages_file:
@@ -315,9 +321,12 @@ def read_generator_file(percentages_filename):
             if not category in ordered_categories:
                 raise ValueError(f"Unexpected category '{category}' found in percentages file")
             category_traits = traits_descriptions[category]
-            mapped_freqs = [RARITY_MAPPING[category_traits[attr]] for attr in category_traits]
-            total_freqs = float(sum(mapped_freqs))
-            percentages[category] = dict([(attr, RARITY_MAPPING[category_traits[attr]] / total_freqs) for attr in category_traits])
+            category_total = 0.0
+            for attr in category_traits:
+                category_total += get_rarity_value(category_traits[attr])
+            percentages[category] = {}
+            for attr in category_traits:
+                percentages[category][attr] = get_rarity_value(category_traits[attr]) / category_total
     return {
         'forced_combinations': traits_json['forced_combinations'],
         'excluded_combinations': traits_json['excluded_combinations'],
