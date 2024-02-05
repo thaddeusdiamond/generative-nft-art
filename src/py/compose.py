@@ -91,11 +91,12 @@ def compose_image(combination, in_pics_dir, ordered_subpics_dirs, linked_categor
         if combination[subpic_dir]:
             filename = os.path.join(in_pics_dir, subpic_dir, combination[subpic_dir])
             if subpic_dir in linked_categories:
-                available_matches = os.listdir(filename)
                 linked_match = combination[linked_categories[subpic_dir]]
-                file_match = linked_match if f"{linked_match}.png" in available_matches else 'Default'
-                #print(f"Looking for {linked_match} in subdir {filename} ({available_matches}), found {file_match}")
-                filename = os.path.join(filename, file_match)
+                root_dir = os.path.join(in_pics_dir, subpic_dir, linked_match)
+                available_matches = os.listdir(root_dir)
+                file_match = combination[subpic_dir] if f"{combination[subpic_dir]}.png" in available_matches else 'Default'
+                #print(f"Looking for {combination[subpic_dir]} in subdir {root_dir} ({available_matches}), found {file_match}")
+                filename = os.path.join(root_dir, file_match)
             foreground = Image.open(f"{filename}.png").convert('RGBA')
             background = Image.alpha_composite(background, foreground.resize(output_size))
     return background
