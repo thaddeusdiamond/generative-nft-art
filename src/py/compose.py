@@ -101,11 +101,19 @@ def compose_image(combination, in_pics_dir, ordered_subpics_dirs, linked_categor
             background = Image.alpha_composite(background, foreground.resize(output_size))
     return background
 
-def generate_image(nft, in_pics_dir, out_pics_dir, ordered_subpics_dirs, linked_categories, output_size):
+def responsive_ordering_for(nft, responsive_ordering, ordered_subpics_dirs):
+    for trait in nft:
+        if nft[trait] in responsive_ordering:
+            return responsive_ordering[nft[trait]]
+    return ordered_subpics_dirs
+
+def generate_image(nft, in_pics_dir, out_pics_dir, ordered_subpics_dirs, linked_categories, output_size, responsive_ordering):
     try:
-        composed_image = compose_image(nft, in_pics_dir, ordered_subpics_dirs, linked_categories, output_size)
+        responsive_ordering_nft = responsive_ordering_for(nft, responsive_ordering, ordered_subpics_dirs)
+        composed_image = compose_image(nft, in_pics_dir, responsive_ordering_nft, linked_categories, output_size)
         composed_image.save(os.path.join(out_pics_dir, get_pic_filename(nft['name'])))
     except FileNotFoundError as e:
+        print(nft)
         print(e)
 
 def calculate_hamming_distance(nft_a, nft_b, ordered_subpics_dirs):
@@ -240,14 +248,14 @@ def generate_nft_metadata(start_num, total_nfts, traits_ratios, acceptable_hammi
         full_list.append(nft_combination)
     return full_list
 
-def generate_nfts(start_num, total_nfts, traits_ratios, in_pics_dir, acceptable_hamming, output_pics_dir, metadata_dir, static_traits, variable_traits, ordered_subpics_dirs, linked_categories, output_size, policy, name_prefix, project, excluded_combinations, forced_combinations, reference_set_dir):
+def generate_nfts(start_num, total_nfts, traits_ratios, in_pics_dir, acceptable_hamming, output_pics_dir, metadata_dir, static_traits, variable_traits, ordered_subpics_dirs, linked_categories, output_size, policy, name_prefix, project, excluded_combinations, forced_combinations, reference_set_dir, responsive_ordering):
     nft_metadata = generate_nft_metadata(start_num, total_nfts, traits_ratios, acceptable_hamming, static_traits, variable_traits, ordered_subpics_dirs, name_prefix, excluded_combinations, forced_combinations, reference_set_dir)
     dump_metadata_files(nft_metadata, metadata_dir, policy, project) # Temporary in case something happens during the composition run
     metadata_statistics = compile_metadata_statistics(nft_metadata, variable_traits)
     with open(os.path.join(os.path.dirname(metadata_dir), 'metadata_statistics.tsv'), 'w') as statistics_file:
         write_metadata_statistics(nft_metadata, metadata_statistics, traits_ratios, statistics_file, ordered_subpics_dirs)
     for nft in nft_metadata:
-        generate_image(nft, in_pics_dir, output_pics_dir, ordered_subpics_dirs, linked_categories, output_size)
+        generate_image(nft, in_pics_dir, output_pics_dir, ordered_subpics_dirs, linked_categories, output_size, responsive_ordering)
 
 def unwrap_calc_hamming(metadata_a, metadata_b, ordered_subpics_dirs, policy):
     return calculate_hamming_distance(unwrap(metadata_a, policy), unwrap(metadata_b, policy), ordered_subpics_dirs)
@@ -299,7 +307,7 @@ def check_uniqueness(nft_metadata, reference_set, ordered_subpics_dirs, policy):
                 reference = ref_nft
         print(f"Min hamming found {min_hamming}:\n{reference}")
 
-def regenerate_image(nft_metadata_filename, in_pics_dir, output_pics_dir, ordered_subpics_dirs, linked_categories, output_size, policy, trait_filter):
+def regenerate_image(nft_metadata_filename, in_pics_dir, output_pics_dir, ordered_subpics_dirs, linked_categories, output_size, policy, trait_filter, responsive_ordering):
     with open(nft_metadata_filename, 'r') as nft_metadata_file:
         nfts_json = json.load(nft_metadata_file)
         nfts = nfts_json["721"][policy].values() if policy else [nfts_json]
@@ -307,7 +315,7 @@ def regenerate_image(nft_metadata_filename, in_pics_dir, output_pics_dir, ordere
             (trait, val) = trait_filter.split('=') if trait_filter else (None, None)
             if trait in nft and nft[trait] != val:
                 continue
-            generate_image(nft, in_pics_dir, output_pics_dir, ordered_subpics_dirs, linked_categories, output_size)
+            generate_image(nft, in_pics_dir, output_pics_dir, ordered_subpics_dirs, linked_categories, output_size, responsive_ordering)
 
 def get_rarity_value(rarity_val):
     if isinstance(rarity_val, numbers.Number):
@@ -335,6 +343,7 @@ def read_generator_file(percentages_filename):
         'forced_combinations': traits_json['forced_combinations'],
         'excluded_combinations': traits_json['excluded_combinations'],
         'linked_categories': traits_json['linked_categories'],
+        'responsive_ordering': traits_json['responsive_ordering'],
         'ordered_categories': ordered_categories,
         'rarity': percentages
     }
@@ -429,6 +438,7 @@ if __name__ == '__main__':
         _forced_combinations = _traits_rarity['forced_combinations']
         _linked_categories = _traits_rarity['linked_categories']
         _ordered_subpics_dir = _traits_rarity['ordered_categories']
+        _responsive_ordering = _traits_rarity['responsive_ordering']
         _traits_ratios = _traits_rarity['rarity']
         _static_traits = dict(_args.static_traits) if _args.static_traits else {}
         _variable_traits = [trait for trait in _ordered_subpics_dir if not (trait in _static_traits.keys())]
@@ -436,7 +446,7 @@ if __name__ == '__main__':
         print(f"Static traits specified: {_static_traits}")
         print(f"Variable traits specified: {_variable_traits}")
         _reference_set = load_metadata(_args.reference_set_dir) if _args.reference_set_dir else []
-        generate_nfts(_args.start_num, _args.total_nfts, _traits_ratios, _args.pics_dir, _args.min_hamming, _pics_dir, _metadata_dir, _static_traits, _variable_traits, _ordered_subpics_dir, _linked_categories, (_args.dimension, _args.dimension), _args.policy, _args.name_prefix, _args.project, _excluded_combinations, _forced_combinations, _reference_set)
+        generate_nfts(_args.start_num, _args.total_nfts, _traits_ratios, _args.pics_dir, _args.min_hamming, _pics_dir, _metadata_dir, _static_traits, _variable_traits, _ordered_subpics_dir, _linked_categories, (_args.dimension, _args.dimension), _args.policy, _args.name_prefix, _args.project, _excluded_combinations, _forced_combinations, _reference_set, _responsive_ordering)
     elif _args.command == 'generate-samples':
         generate_sample_images(_args.metadata_dir, _args.pics_dir, _args.num_images, _args.num_iterations, _pics_dir, _ordered_subpics_dir, _args.policy)
     elif _args.command == 'on-chain':
@@ -452,13 +462,15 @@ if __name__ == '__main__':
         _traits_rarity = read_generator_file(_args.percentages_file)
         _ordered_subpics_dir = _traits_rarity['ordered_categories']
         _linked_categories = _traits_rarity['linked_categories']
+        _responsive_ordering = _traits_rarity['responsive_ordering']
         for nft_metadata_file in os.listdir(_args.nft_directory):
             nft_metadata_path = os.path.join(_args.nft_directory, nft_metadata_file)
-            regenerate_image(nft_metadata_path, _args.pics_dir, _pics_dir, _ordered_subpics_dir, _linked_categories, (_args.dimension, _args.dimension), _args.policy, _args.trait_filter)
+            regenerate_image(nft_metadata_path, _args.pics_dir, _pics_dir, _ordered_subpics_dir, _linked_categories, (_args.dimension, _args.dimension), _args.policy, _args.trait_filter, _responsive_ordering)
     elif _args.command == 'regenerate-image':
         _traits_rarity = read_generator_file(_args.percentages_file)
         _ordered_subpics_dir = _traits_rarity['ordered_categories']
         _linked_categories = _traits_rarity['linked_categories']
-        regenerate_image(_args.nft_metadata_file, _args.pics_dir, _pics_dir, _ordered_subpics_dir, _linked_categories, (_args.dimension, _args.dimension), _args.policy, _args.trait_filter)
+        _responsive_ordering = _traits_rarity['responsive_ordering']
+        regenerate_image(_args.nft_metadata_file, _args.pics_dir, _pics_dir, _ordered_subpics_dir, _linked_categories, (_args.dimension, _args.dimension), _args.policy, _args.trait_filter, _responsive_ordering)
     else:
         raise ValueError("No command passed to the program.  Use -h for help.")
