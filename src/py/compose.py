@@ -124,7 +124,7 @@ def get_metadata_filename(nft_name):
     return f"{nft_name}.json"
 
 def wrap(nft_name, values, policy):
-    if policy == '':
+    if not policy:
         return values
     return {
         "721": {
@@ -136,7 +136,7 @@ def wrap(nft_name, values, policy):
     }
 
 def unwrap(metadata, policy):
-    return next(iter(metadata["721"][policy].values())) if policy != '' else metadata
+    return next(iter(metadata["721"][policy].values())) if policy else metadata
 
 def get_metadata_for(nft, policy, project):
     metadata = { "mediaType": "image/png", "project": project }
@@ -301,7 +301,7 @@ def check_uniqueness(nft_metadata, reference_set, ordered_subpics_dirs, policy):
 def regenerate_image(nft_metadata_filename, in_pics_dir, output_pics_dir, ordered_subpics_dirs, linked_categories, output_size, policy, trait_filter):
     with open(nft_metadata_filename, 'r') as nft_metadata_file:
         nfts_json = json.load(nft_metadata_file)
-        nfts = ["721"][policy].values() if policy else [nfts_json]
+        nfts = nfts_json["721"][policy].values() if policy else [nfts_json]
         for nft in nfts:
             (trait, val) = trait_filter.split('=') if trait_filter else (None, None)
             if trait in nft and nft[trait] != val:
@@ -352,7 +352,7 @@ def get_parser():
     nfts_parser = subparsers.add_parser('generate-nfts', help='Compose NFTs according to trait gradient algorithm')
     nfts_parser.add_argument('--output-dir', type=str, required=True)
     nfts_parser.add_argument('--total-nfts', type=int, required=True)
-    nfts_parser.add_argument('--policy', type=str, required=True)
+    nfts_parser.add_argument('--policy', type=str, required=False)
     nfts_parser.add_argument('--project', type=str, required=True)
     nfts_parser.add_argument('--name-prefix', type=str, required=True)
     nfts_parser.add_argument('--dimension', type=int, required=True)
@@ -369,20 +369,20 @@ def get_parser():
     samples_parser.add_argument('--pics-dir', required=True)
     samples_parser.add_argument('--num-images', type=int, required=True)
     samples_parser.add_argument('--num-iterations', type=int, required=True)
-    samples_parser.add_argument('--policy', type=str, required=True)
+    samples_parser.add_argument('--policy', type=str, required=False)
 
     onchain_parser = subparsers.add_parser('on-chain', help='Create metadata with PNG on chain (size checks not enforced, must be <16KB)')
     onchain_parser.add_argument('--output-dir', type=str, required=True)
     onchain_parser.add_argument('--metadata-dir', required=True)
     onchain_parser.add_argument('--pics-dir', required=True)
-    onchain_parser.add_argument('--policy', required=True)
+    onchain_parser.add_argument('--policy', required=False)
     onchain_parser.add_argument('--project', required=True)
 
     ipfs_parser = subparsers.add_parser('upload-to-ipfs', help='Upload raw images to IPFS')
     ipfs_parser.add_argument('--output-dir', type=str, required=True)
     ipfs_parser.add_argument('--metadata-dir', required=True)
     ipfs_parser.add_argument('--pics-dir', required=True)
-    ipfs_parser.add_argument('--policy', type=str, required=True)
+    ipfs_parser.add_argument('--policy', type=str, required=False)
     ipfs_parser.add_argument('--project', type=str, required=True)
     ipfs_parser.add_argument('--nft-storage-key', type=str, required=True)
     ipfs_parser.add_argument('--existing-uploads-dir', type=str, required=False)
@@ -391,7 +391,7 @@ def get_parser():
     uniq_parser.add_argument('--nft-metadata', required=True)
     uniq_parser.add_argument('--reference-set-dir', required=True)
     uniq_parser.add_argument('--percentages-file', type=str, required=True)
-    uniq_parser.add_argument('--policy', type=str, required=True)
+    uniq_parser.add_argument('--policy', type=str, required=False)
 
     regen_parser = subparsers.add_parser('regenerate-image', help='Regenerate an image based on metadata file provided (useful for 1-of-1s)')
     regen_parser.add_argument('--output-dir', type=str, required=True)
@@ -399,7 +399,7 @@ def get_parser():
     regen_parser.add_argument('--nft-metadata-file', required=True)
     regen_parser.add_argument('--dimension', type=int, required=True)
     regen_parser.add_argument('--pics-dir', required=True)
-    regen_parser.add_argument('--policy', required=True)
+    regen_parser.add_argument('--policy', required=False)
     regen_parser.add_argument('--trait-filter', required=False)
 
     regen_dir_parser = subparsers.add_parser('regenerate-directory', help='Regenerate a directory based on metadata files provided (useful for upgraded art)')
@@ -409,7 +409,7 @@ def get_parser():
     regen_dir_parser.add_argument('--dimension', type=int, required=True)
     regen_dir_parser.add_argument('--pics-dir', required=True)
     regen_dir_parser.add_argument('--no-unwrap', action='store_true')
-    regen_dir_parser.add_argument('--policy', required=True)
+    regen_dir_parser.add_argument('--policy', required=False)
     regen_dir_parser.add_argument('--trait-filter', required=False)
 
     return parser
