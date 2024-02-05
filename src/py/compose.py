@@ -41,14 +41,17 @@ def generate_new_metadata_on_chain(in_metadata_dir, in_pics_dir, out_metadata_di
         onchain_nfts.append(onchain_nft)
     dump_metadata_files(onchain_nfts, out_metadata_dir, policy, project)
 
-def upload_to_ipfs_new_metadata(in_pics_dir, in_metadata_dir, out_metadata_dir, policy, project, nftstorage_key):
+def upload_to_ipfs_new_metadata(in_pics_dir, in_metadata_dir, out_metadata_dir, policy, project, nftstorage_key, existing_uploads_dir):
     metadata_list = load_metadata(in_metadata_dir)
+    existing_uploads = [] if not existing_uploads_dir else os.listdir(existing_uploads_dir)
     nfts_list = [unwrap(nft, policy) for nft in metadata_list]
     nftstorage_config = nft_storage.Configuration(access_token = nftstorage_key)
     with nft_storage.ApiClient(nftstorage_config) as api_client:
         print("Beginning NFT.Storage file uploads")
         api_instance = nft_storage_api.NFTStorageAPI(api_client)
         for nft in nfts_list:
+            if get_metadata_filename(nft['name']) in existing_uploads:
+                continue
             image_ipfs = upload_to_ipfs(api_client, nft, in_pics_dir)
             if image_ipfs:
                 nft['image'] = ["ipfs://", image_ipfs]
@@ -382,6 +385,7 @@ def get_parser():
     ipfs_parser.add_argument('--policy', type=str, required=True)
     ipfs_parser.add_argument('--project', type=str, required=True)
     ipfs_parser.add_argument('--nft-storage-key', type=str, required=True)
+    ipfs_parser.add_argument('--existing-uploads-dir', type=str, required=False)
 
     uniq_parser = subparsers.add_parser('check-uniqueness', help='Compare the uniqueness of this NFT to the reference set')
     uniq_parser.add_argument('--nft-metadata', required=True)
@@ -437,7 +441,7 @@ if __name__ == '__main__':
     elif _args.command == 'on-chain':
         generate_new_metadata_on_chain(_args.metadata_dir, _args.pics_dir, _metadata_dir, _args.policy, _args.project)
     elif _args.command == 'upload-to-ipfs':
-        upload_to_ipfs_new_metadata(_args.pics_dir, _args.metadata_dir, _metadata_dir, _args.policy, _args.project, _args.nft_storage_key)
+        upload_to_ipfs_new_metadata(_args.pics_dir, _args.metadata_dir, _metadata_dir, _args.policy, _args.project, _args.nft_storage_key, _args.existing_uploads_dir)
     elif _args.command == 'check-uniqueness':
         _traits_rarity = read_generator_file(_args.percentages_file)
         _ordered_subpics_dir = _traits_rarity['ordered_categories']
