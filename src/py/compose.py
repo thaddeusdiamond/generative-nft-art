@@ -307,15 +307,21 @@ def check_uniqueness(nft_metadata, reference_set, ordered_subpics_dirs, policy):
                 reference = ref_nft
         print(f"Min hamming found {min_hamming}:\n{reference}")
 
+def generate_image_trait_filtered(nft, in_pics_dir, output_pics_dir, ordered_subpics_dirs, linked_categories, output_size, responsive_ordering, trait_filters):
+    if not trait_filters:
+        generate_image(nft, in_pics_dir, output_pics_dir, ordered_subpics_dirs, linked_categories, output_size, responsive_ordering)
+    for trait_filter_opt in trait_filters:
+        if trait_filter_opt[0] in nft and nft[trait_filter_opt[0]] == trait_filter_opt[1]:
+            generate_image(nft, in_pics_dir, output_pics_dir, ordered_subpics_dirs, linked_categories, output_size, responsive_ordering)
+            return
+
 def regenerate_image(nft_metadata_filename, in_pics_dir, output_pics_dir, ordered_subpics_dirs, linked_categories, output_size, policy, trait_filter, responsive_ordering):
     with open(nft_metadata_filename, 'r') as nft_metadata_file:
         nfts_json = json.load(nft_metadata_file)
         nfts = nfts_json["721"][policy].values() if policy else [nfts_json]
         for nft in nfts:
-            (trait, val) = trait_filter.split('=') if trait_filter else (None, None)
-            if trait in nft and nft[trait] != val:
-                continue
-            generate_image(nft, in_pics_dir, output_pics_dir, ordered_subpics_dirs, linked_categories, output_size, responsive_ordering)
+            trait_filters = [trait_filter_opt.split('=') for trait_filter_opt in trait_filter.split(',')] if trait_filter else []
+            generate_image_trait_filtered(nft, in_pics_dir, output_pics_dir, ordered_subpics_dirs, linked_categories, output_size, responsive_ordering, trait_filters)
 
 def get_rarity_value(rarity_val):
     if isinstance(rarity_val, numbers.Number):
