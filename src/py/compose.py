@@ -13,8 +13,10 @@ import time
 import nft_storage
 
 from cid import make_cid
-from nft_storage.api import nft_storage_api
+
 from PIL import Image
+
+from utils import IPFS_SCHEME, upload_to_ipfs
 
 # Image Generation Constants
 RARITY_MAPPING = {
@@ -48,13 +50,12 @@ def upload_to_ipfs_new_metadata(in_pics_dir, in_metadata_dir, out_metadata_dir, 
     nftstorage_config = nft_storage.Configuration(access_token = nftstorage_key)
     with nft_storage.ApiClient(nftstorage_config) as api_client:
         print("Beginning NFT.Storage file uploads")
-        api_instance = nft_storage_api.NFTStorageAPI(api_client)
         for nft in nfts_list:
             if get_metadata_filename(nft['name']) in existing_uploads:
                 continue
-            image_ipfs = upload_to_ipfs(api_client, nft, in_pics_dir)
+            image_ipfs = upload_to_ipfs(api_client, os.path.join(in_pics_dir, get_pic_filename(nft['name'])))
             if image_ipfs:
-                nft['image'] = ["ipfs://", image_ipfs] if cip_25 else f"ipfs://{image_ipfs}"
+                nft['image'] = [IPFS_SCHEME, image_ipfs] if cip_25 else f"{IPFS_SCHEME}{image_ipfs}"
                 dump_metadata_files([nft], out_metadata_dir, policy, project)
 
 def generate_sample_images(metadata_dir, pics_dir, num_images, num_iterations, output_pics_dir, ordered_subpics_dirs, policy):
@@ -270,28 +271,6 @@ def load_metadata(metadata_dir):
             if not nft_metadata:
                 print(metadata_filename)
     return metadata_list
-
-def upload_to_ipfs(api_client, nft, in_pics_dir):
-    api_instance = nft_storage_api.NFTStorageAPI(api_client)
-    nft_filename = os.path.join(in_pics_dir, get_pic_filename(nft['name']))
-    print(f"Uploading {nft_filename}")
-    tries_remaining = 3
-    try:
-        while tries_remaining:
-            with open(nft_filename, 'rb') as nft_body:
-                try:
-                    # https://github.com/nftstorage/python-client/issues/1
-                    tries_remaining -= 1
-                    api_response = api_instance.store(nft_body, _check_return_type=False)
-                    #print(f"Received response: {api_response}")
-                    print(f"Uploaded as {api_response.value['cid']}")
-                    return api_response.value['cid']
-                    #print(f"Dumping {nft} to file")
-                except nft_storage.ApiException as e:
-                    print("Exception when calling NFTStorageAPI->store: %s\n...Retrying" % e)
-                    time.sleep(1)
-    except Exception as e:
-        print(f"Encountered fatal exception for '{nft_filename}': {e}")
 
 def check_uniqueness(nft_metadata, reference_set, ordered_subpics_dirs, policy):
     nft_paths = [os.path.join(nft_metadata, file) for file in os.listdir(nft_metadata)] if os.path.isdir(nft_metadata) else [nft_metadata]
